@@ -1,13 +1,13 @@
 {
-  "name": "nodekb",
+  "name": "roleSystemApp",
   "version": "1.0.0",
-  "description": "Simple knowledgebase app",
+  "description": "Simple role System app",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "author": "Brad Traversy",
-  "license": "ISC",
+  "author": "Iris-adv",
+  "license": "MIT",
   "dependencies": {
     "acl": "^0.4.11",
     "bcryptjs": "^2.4.3",
