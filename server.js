@@ -104,6 +104,4 @@ app.use('/articles', articles);
 app.use('/users', users);
 
 // Start Server
-app.listen(8080, function(){
-  console.log('Server started on port 8080...');
-});
+app.listen(8080);
