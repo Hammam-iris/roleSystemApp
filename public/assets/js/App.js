@@ -1,0 +1,1247 @@
+var APP = (function() {
+
+    "use strict";
+    // private methods and data variables
+    let mouseVector, containerOffset, containerWidth, containerHeight;
+    let zipFile = new JSZip();
+    let mixers = [];
+    let clipActions = [];
+    let loadedUpperGeometries = [];
+    let loadedLowerGeometries = [];
+    let loadedMeshes= [];
+    let transformationSteps;
+    let loadedUpperGumsMeshes = [];
+    let loadedLowerGumsMeshes = [];
+    let upperGumsClipActions = [];
+    let lowerGumsClipActions = [];
+    let showMaxil = false;
+    let showMand = false;
+    let isPlaying = false;
+    let counter = 0;
+    let workerList = [];
+    let plan = {};
+    plan.steps = [];
+   //let progressBar = new ldBar("#loadingBar", {"type" : "stroke", "stroke": '#4e2249',  "stroke-width": 15, "path": "M 354.464,18.248 C 334.891,25.947 318.818,31.462 305.999,35.404 293.182,31.46 277.107,25.945 257.536,18.248 98.274,-44.413 -2.179,59.454 122.883,250.899 64.987,435.088 110.207,572.261 177.81,608.912 242.606,644.042 242.016,367.759 306,367.759 c 63.988,0 63.396,276.285 128.194,241.153 67.6,-36.651 112.822,-173.824 54.924,-358.013 C 614.178,59.454 513.725,-44.413 354.464,18.248 Z"});
+
+    for (let i = 0; i < window.navigator.hardwareConcurrency / 2; ++i) {
+        let newWorker = {
+            worker: new Worker('assets/js/worker.js'),
+            inUse: false
+        };
+
+        newWorker.worker.addEventListener('message', (e) => {
+
+            // console.log('Worker said: ', e.data);
+
+            if (typeof(e.data) == typeof(true)){            
+                newWorker.inUse = e.data;
+            }
+            else{
+
+                let c;
+                let n;
+                let jaw = "";
+
+                const vertices = e.data.vertices;
+                const normals = e.data.normals;
+
+                const geometry = new THREE.BufferGeometry();
+
+                geometry.addAttribute( 'position', new THREE.BufferAttribute( vertices, 3 ) );
+                geometry.addAttribute( 'normal', new THREE.BufferAttribute( normals, 3 ) );
+
+                let modelMesh;
+
+                if (e.data.name.indexOf("Jaw") !== -1)
+                    modelMesh = new THREE.Mesh(geometry, WebGL.gumsMaterial);
+                else
+                    modelMesh = new THREE.Mesh(geometry, WebGL.teethMaterial);
+
+                //if teeth
+                if (e.data.name.indexOf("Jaw") === -1){
+
+                    const numbers = e.data.name.match(/\d+/g).map(Number);
+
+                    if(numbers[numbers.length - 1] <= 16)
+                        jaw = "upper";
+                    else  
+                        jaw = "lower";
+                
+
+                    if (e.data.name.indexOf("Tooth") !== -1 && e.data.name.indexOf("Original") !== -1)
+                        plan.steps[e.data.stepIdx][jaw].teeth[e.data.toothIdx].mesh = modelMesh;
+                }
+
+
+                if (e.data.name.indexOf("UpperJaw") !== -1)
+                    plan.steps[e.data.stepIdx].upper.gums.mesh = modelMesh;
+
+                if (e.data.name.indexOf("LowerJaw") !== -1)
+                    plan.steps[e.data.stepIdx].lower.gums.mesh = modelMesh;
+                
+        
+                if (e.data.name.indexOf("Original") !== -1)
+                    WebGL.addMesh(modelMesh);
+            }
+
+        }, false);
+
+        workerList.push(newWorker);
+    }
+
+    const HTML = (function() {
+        // private methods and data variables
+
+        let slider = document.querySelector("#range1");
+
+        function init(){
+
+            
+
+            slider.addEventListener("input", (e)=>{
+
+                for(let clip of clipActions){
+                    clip.time = e.target.valueAsNumber;
+                }
+                    
+                if (!showMand){
+                    for(let i = 0; i < upperGumsClipActions.length - 1; ++i){
+
+                        if (e.target.valueAsNumber >= i && e.target.valueAsNumber <= i + 1){
+
+                            loadedUpperGumsMeshes[i].visible = true;
+                            upperGumsClipActions[i].time = e.target.valueAsNumber - i;
+                        }
+                        else{
+
+                            loadedUpperGumsMeshes[i].visible = false;
+                        }
+                    }
+                }
+
+                if (!showMaxil){
+                    for(let i = 0; i < lowerGumsClipActions.length - 1; ++i){
+
+                        if (e.target.valueAsNumber >= i && e.target.valueAsNumber <= i + 1){
+
+                            loadedLowerGumsMeshes[i].visible = true;
+                            lowerGumsClipActions[i].time = e.target.valueAsNumber - i;
+                            // console.log(e.target.valueAsNumber);
+
+                        }
+                        else{
+
+                            loadedLowerGumsMeshes[i].visible = false;
+                        }
+                    }
+                }
+            });
+        }
+
+        return {
+            // public methods and properties
+            init,
+            slider: slider
+        };
+    }());
+
+
+    const UTILS = (function() {
+        // private methods and data variables
+
+        function htmlElementPosition(elm){
+            let x = 0, y = 0;
+
+            do {
+                x += elm.offsetLeft;
+                y += elm.offsetTop;
+
+            } while (elm = elm.offsetParent);
+
+            return { x, y };
+        }  
+
+        function retNum(str) { 
+            const num = str.replace(/[^0-9]/g, ''); 
+            return parseInt(num,10); 
+        }
+
+        function getFilenameFromPath(str){
+
+            return str.split('\\').pop().split('/').pop();
+        }
+
+        return {
+            // public methods and properties
+            htmlElementPosition,
+            getFilenameFromPath,
+            retNum
+        };
+    }());
+
+    const WebGL = (function() {
+        // private methods and data variables
+
+        const webglContainer = document.querySelector("#webGLContainer");
+
+        containerOffset = UTILS.htmlElementPosition(webglContainer);
+        containerWidth = webglContainer.clientWidth;
+        containerHeight = webglContainer.clientHeight;
+
+        let mFlag = 0;
+        let tFlag = 0;
+        let meshesLoaded = [];
+        const clock = new THREE.Clock();
+        const renderer = new THREE.WebGLRenderer({ antialias: true/*alpha: true*/ });
+        const clearColor = 0XCEB9CC;
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(15.0, containerWidth / containerHeight, 1, 100000);
+        const trackballControls = new THREE.TrackballControls(camera, webglContainer);
+        const stlLoader = new THREE.STLLoader();
+        const axesHelper = new THREE.AxesHelper(200);
+        const sphereGeometry = new THREE.SphereGeometry(0.3, 8, 8);
+        const sphereMaterial = new THREE.MeshPhongMaterial({ color: 0xFF0000, specular: 0x4d4d4d, shininess: 8 });
+        const sphereMaterial2 = new THREE.MeshPhongMaterial({ color: 0x0000FF, specular: 0x4d4d4d, shininess: 8 });
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        const teethMaterial = new THREE.MeshPhongMaterial({ side: THREE.FrontSide, transparent: false, opacity: 0.4320, color: 0xfff1d1, specular: 0x4d4d4d, shininess: 6 });
+        const teethAfterMaterial = new THREE.MeshPhongMaterial({ side: THREE.FrontSide, transparent: true, opacity: 0.4320, color: 0x63D947, specular: 0x4d4d4d, shininess: 6 });
+        const gumsMaterial = new THREE.MeshPhongMaterial({ side: THREE.FrontSide, transparent: false, opacity: 0.4320, color: 0xcb3c38, specular: 0x4d4d4d, shininess: 6, morphTargets: true, morphNormals: true });
+
+        let tab1_1 = document.querySelector("#tab1_1");
+
+        function render() {
+
+            const delta = clock.getDelta();
+
+            renderer.render(scene, camera);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+
+            const delta = clock.getDelta();
+
+            if ( mixers[0] ) {
+
+               
+
+                // tab1_1.textContent =  "" + clipActions[0].time;
+
+                let t = clipActions[0].time;
+
+                if (t <= 29){
+
+                    for (let mixer of mixers)
+                        mixer.update( delta );
+
+                    HTML.slider.valueAsNumber = t;
+
+                    if(!showMand){
+                        for(let i = 0; i < upperGumsClipActions.length; ++i){
+
+                            if (t >= i && t <= i + 1){
+
+                                loadedUpperGumsMeshes[i].visible = true;
+                                upperGumsClipActions[i].time = t - i;
+
+                            }
+                            else{
+                                // if (t < 29)
+                                    loadedUpperGumsMeshes[i].visible = false;
+                            }
+                        }
+                    }
+
+                    if(!showMaxil){
+                        for(let i = 0; i < lowerGumsClipActions.length; ++i){
+
+                            if (t >= i && t <= i + 1){
+
+                                loadedLowerGumsMeshes[i].visible = true;
+                                lowerGumsClipActions[i].time = t - i;
+
+                            }
+                            else{
+                                // if (t < 29)
+                                    loadedLowerGumsMeshes[i].visible = false;
+                            }
+                        }
+                    }
+                }
+
+            }
+
+            trackballControls.update(delta);
+
+            directionalLight.position.set(camera.position.x, camera.position.y, camera.position.z);
+
+            render();
+        }
+
+        $(window).resize(function(){
+            
+        });
+
+        function onWindowResize(){
+
+            containerOffset = HTML.htmlElementPosition(webglContainer);
+            containerWidth = webglContainer.clientWidth;
+            containerHeight = webglContainer.clientHeight;
+
+            camera.aspect = containerWidth / containerHeight;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(containerWidth, containerHeight);
+            trackballControls.handleResize();
+        }
+
+        function init(){
+            
+            if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+                //console.log("Mobile");
+
+                // Log.post({ data: "Mobile", type: "error" });
+
+                webglContainer.addEventListener("touchstart", function(e){
+
+                    tFlag = 0;
+                }, false);
+
+                webglContainer.addEventListener("touchend", function(e){
+
+                    // include delta?? http://stackoverflow.com/questions/6042202/how-to-distinguish-mouse-click-and-drag
+                    if (tFlag === 0) {
+                        //console.log("touch click");
+                        onClick(e);
+                    }
+                    else if (tFlag === 1) {
+                        //console.log("touch drag");
+                    }
+                }, false);
+
+                webglContainer.addEventListener("touchmove", function(e){
+
+                    tFlag = 1;
+                }, false);
+            }
+            else {
+                //console.log("PC");
+                webglContainer.addEventListener("mousedown", function(e){
+
+                    mFlag = 0;
+                }, false);
+
+                webglContainer.addEventListener("mousemove", function(e){
+
+                    mFlag = 1;
+                }, false);
+
+                webglContainer.addEventListener("mouseup", function(e){
+
+                    // include delta?? http://stackoverflow.com/questions/6042202/how-to-distinguish-mouse-click-and-drag
+                    if (mFlag === 0) {
+                        // console.log("click");
+                        onClick(e);
+                    }
+                    else if (mFlag === 1) {
+                        // console.log("drag");
+                    }
+                }, false);
+            }
+
+
+            trackballControls.rotateSpeed = 5.0;
+            trackballControls.zoomSpeed = 1;
+            trackballControls.staticMoving = true;
+            trackballControls.noZoom = false;
+            trackballControls.noPan = true;
+            trackballControls.addEventListener('change', render);
+
+            //scene.add(axesHelper);
+            scene.add(directionalLight);
+
+
+            camera.position.set(350, 0, 0);
+            camera.up = new THREE.Vector3( 0, 0, 1 );
+            camera.lookAt(scene.position);
+
+            renderer.setClearColor(new THREE.Color(clearColor));
+            // renderer.setClearColor( 0xffffff, 0 );
+            renderer.setSize(webglContainer.clientWidth, webglContainer.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.gammaInput = true;
+            renderer.gammaOutput = true;
+
+            webglContainer.appendChild(renderer.domElement);
+            window.addEventListener("resize", WebGL.onWindowResize, false);
+            animate();
+        }
+
+        function adjustCameraPosition(modelDimensions){
+
+            camera.position.set(5 * modelDimensions.y, 0, 0);
+        }
+
+        function addMesh(mesh){
+
+            scene.add(mesh);
+        }
+
+        return {
+            // public methods and properties
+            init,
+            stlLoader,
+            sphereGeometry,
+            sphereMaterial,
+            teethMaterial,
+            gumsMaterial,
+            camera,
+            scene,
+            adjustCameraPosition,
+            addMesh,
+            meshesLoaded,
+            teethAfterMaterial,
+            sphereMaterial2
+        };
+    }());
+   
+
+    function onClick(event) {
+
+        event.preventDefault();
+
+        if (event.type === "mouseup"){
+
+            mouseVector.x = ((event.pageX - containerOffset.x) / containerWidth) * 2 - 1;
+            mouseVector.y = -((event.pageY - containerOffset.y) / containerHeight) * 2 + 1;
+        }
+        else if (event.type === "touchend"){
+            mouseVector.x = ((event.changedTouches[0].pageX - containerOffset.x) / containerWidth) * 2 - 1;
+            mouseVector.y = -((event.changedTouches[0].pageY - containerOffset.y) / containerHeight) * 2 + 1;
+        }   
+    }
+
+    function generateAnimation(){
+        mixers = [];
+        clipActions = [];
+        upperGumsClipActions = [];
+        lowerGumsClipActions = [];
+        let posAttribs = [];
+        let normAttribs = [];
+
+        for (let i = 0; i < loadedUpperGeometries.length - 1; ++i){
+
+            const posAttr = new THREE.BufferAttribute( loadedUpperGeometries[i+1].attributes.position.array, 3 );
+            const normAttr = new THREE.BufferAttribute( loadedUpperGeometries[i+1].attributes.normal.array, 3 );
+
+            loadedUpperGeometries[i].morphAttributes.position = [posAttr];
+            loadedUpperGeometries[i].morphAttributes.normal = [normAttr];
+
+            let meshTemp = new THREE.Mesh(loadedUpperGeometries[i], WebGL.gumsMaterial);
+            meshTemp.updateMorphTargets();
+
+
+            const morphKF = new THREE.NumberKeyframeTrack( '.morphTargetInfluences[0]', [ 0, 1 ], [ 0, 1 ] );
+            var clip = new THREE.AnimationClip( 'MorphAction', 1, [ morphKF ] );
+            
+            const newLength = mixers.push(new THREE.AnimationMixer( meshTemp ));
+
+            // create a ClipAction and set it to play
+            const newClipsLength  = upperGumsClipActions.push(mixers[newLength-1].clipAction( clip ));
+            //clipActions[newClipsLength-1].setEffectiveTimeScale(0.5);
+            upperGumsClipActions[newClipsLength-1].loop = THREE.LoopOnce;
+            upperGumsClipActions[newClipsLength-1].clampWhenFinished = true;
+            upperGumsClipActions[newClipsLength-1].play();
+            upperGumsClipActions[newClipsLength-1].paused = true;
+            upperGumsClipActions[newClipsLength-1].time = 0.0;
+
+
+            loadedUpperGumsMeshes.push(meshTemp);
+
+            WebGL.addMesh(meshTemp);
+
+            if(i !== 0)
+                meshTemp.visible = false;
+        }
+
+        for (let i = 0; i < loadedLowerGeometries.length - 1; ++i){
+
+            const posAttr = new THREE.BufferAttribute( loadedLowerGeometries[i+1].attributes.position.array, 3 );
+            const normAttr = new THREE.BufferAttribute( loadedLowerGeometries[i+1].attributes.normal.array, 3 );
+
+            loadedLowerGeometries[i].morphAttributes.position = [posAttr];
+            loadedLowerGeometries[i].morphAttributes.normal = [normAttr];
+
+            let meshTemp = new THREE.Mesh(loadedLowerGeometries[i], WebGL.gumsMaterial);
+            meshTemp.updateMorphTargets();
+
+
+            const morphKF = new THREE.NumberKeyframeTrack( '.morphTargetInfluences[0]', [ 0, 1 ], [ 0, 1 ] );
+            var clip = new THREE.AnimationClip( 'MorphAction', 1, [ morphKF ] );
+            
+            const newLength = mixers.push(new THREE.AnimationMixer( meshTemp ));
+
+            // create a ClipAction and set it to play
+            const newClipsLength  = lowerGumsClipActions.push(mixers[newLength-1].clipAction( clip ));
+            //clipActions[newClipsLength-1].setEffectiveTimeScale(0.5);
+            lowerGumsClipActions[newClipsLength-1].loop = THREE.LoopOnce;
+            lowerGumsClipActions[newClipsLength-1].clampWhenFinished = true;
+            lowerGumsClipActions[newClipsLength-1].play();
+            lowerGumsClipActions[newClipsLength-1].paused = true;
+            lowerGumsClipActions[newClipsLength-1].time = 0.0;
+
+
+            loadedLowerGumsMeshes.push(meshTemp);
+
+            WebGL.addMesh(meshTemp);
+
+            if(i !== 0)
+                meshTemp.visible = false;
+        }
+
+
+        // console.log(loadedUpperGumsMeshes);
+        // console.log(loadedLowerGumsMeshes);
+        // console.log(loadedMeshes);
+        // console.log(upperGumsClipActions);
+        // console.log(lowerGumsClipActions);
+  
+        for(let i = 0; i < 32; ++i){
+
+            if(loadedMeshes[i].name.indexOf("Jaw") === -1){
+
+                let posKey = {times: [], values: []};
+                let quaKey = {times: [], values: []};
+
+                const pos = new THREE.Vector3();
+                const qua = new THREE.Quaternion();
+                pos.copy(loadedMeshes[i].position);
+                qua.copy(loadedMeshes[i].quaternion);
+
+                posKey.values.push(...[ pos.x, pos.y, pos.z]);
+                quaKey.values.push(...[ qua.x, qua.y, qua.z, qua.w]);
+                posKey.times.push(0);
+                quaKey.times.push(0);
+
+                for(let s = 1; s < transformationSteps.length; ++s){
+
+                    posKey.times.push(s);
+                    quaKey.times.push(s);
+
+                    let fromC = new THREE.Vector3(transformationSteps[0][i].centroid.x, transformationSteps[0][i].centroid.y, transformationSteps[0][i].centroid.z);
+                    let fromN = new THREE.Vector3(transformationSteps[0][i].normal.x, transformationSteps[0][i].normal.y, transformationSteps[0][i].normal.z);
+
+                    let toC = new THREE.Vector3(transformationSteps[s][i].centroid.x, transformationSteps[s][i].centroid.y, transformationSteps[s][i].centroid.z);
+                    let toN = new THREE.Vector3(transformationSteps[s][i].normal.x, transformationSteps[s][i].normal.y, transformationSteps[s][i].normal.z);
+
+
+                    const posBefore = loadedMeshes[i].position;
+                    const rotBefore = loadedMeshes[i].quaternion;
+
+                    const quat = new THREE.Quaternion();
+                    const mtx = new THREE.Matrix4();
+                    const invMtx = new THREE.Matrix4();
+                    const rotMtx = new THREE.Matrix4();
+                    const diff = new THREE.Vector3();
+                    const mtx2 = new THREE.Matrix4();
+                    const finalMtx = new THREE.Matrix4();
+
+                    const tempNegation = new THREE.Vector3();
+                    tempNegation.copy(fromC);
+                    tempNegation.negate();
+
+                    mtx.makeTranslation(tempNegation.x, tempNegation.y, tempNegation.z);
+                    invMtx.makeTranslation(fromC.x, fromC.y, fromC.z);
+                    quat.setFromUnitVectors(fromN, toN);
+                    rotMtx.makeRotationFromQuaternion(quat);
+                    diff.subVectors(toC, fromC);
+                    mtx2.makeTranslation(diff.x, diff.y, diff.z);
+
+                    finalMtx.multiply(mtx);
+                    finalMtx.premultiply(rotMtx);
+                    finalMtx.premultiply(invMtx);
+                    finalMtx.premultiply(mtx2);
+                    //finalMtx = mtx * rotMtx * invMtx * mtx2;
+
+
+                    let p = new THREE.Vector3();
+                    let q = new THREE.Quaternion();
+                    let scale = new THREE.Vector3();
+
+                    finalMtx.decompose(p, q , scale);
+
+                    posKey.values.push(...[ p.x, p.y, p.z]);
+                    quaKey.values.push(...[ q.x, q.y, q.z, q.w]);
+                }
+
+                        
+                // create an animation sequence with the tracks
+                // If a negative time value is passed, the duration will be calculated from the times of the passed tracks array
+                // var clip = new THREE.AnimationClip( 'Action', 3, [ morphKF ] );
+                // // setup the AnimationMixer
+                // mixer = new THREE.AnimationMixer( originalMesh );
+                // // create a ClipAction and set it to play
+                // var clipAction = mixer.clipAction( clip );
+                // clipAction.setEffectiveTimeScale(0.5);
+                // clipAction.loop = THREE.LoopOnce;
+                // clipAction.clampWhenFinished = true;
+                // clipAction.play();
+
+
+                // posKey.times.pop();
+                // quaKey.times.pop();
+
+                // console.log(posKey.times);
+                // console.log(transformationSteps.length);
+
+                const positionKF = new THREE.VectorKeyframeTrack( '.position', posKey.times, posKey.values );
+                const quaternionKF = new THREE.QuaternionKeyframeTrack( '.quaternion', quaKey.times, quaKey.values );
+
+                const clip = new THREE.AnimationClip( 'Action of ' + loadedMeshes[i].name, transformationSteps.length, [ positionKF, quaternionKF ] );
+                
+                // setup the AnimationMixer
+                const newLength = mixers.push(new THREE.AnimationMixer( loadedMeshes[i] ));
+
+                // create a ClipAction and set it to play
+                const newClipsLength  = clipActions.push(mixers[newLength-1].clipAction( clip ));
+                //clipActions[newClipsLength-1].setEffectiveTimeScale(0.5);
+                clipActions[newClipsLength-1].loop = THREE.LoopOnce;
+                clipActions[newClipsLength-1].clampWhenFinished = true;
+                clipActions[newClipsLength-1].play();
+                clipActions[newClipsLength-1].paused = true;
+                clipActions[newClipsLength-1].time = 0.0;
+            }
+        }
+
+        // console.log(loadedMeshes);
+        // console.log(loadedUpperGeometries);
+        // console.log(loadedLowerGeometries);
+
+
+        for(let clip of clipActions){
+            clip.time = 0.0;
+        }
+
+        for(let clip of upperGumsClipActions){
+            clip.time = 0.0;
+        }
+
+        for(let clip of lowerGumsClipActions){
+            clip.time = 0.0;
+        }
+
+        // console.log(upperGumsClipActions.length);
+        // console.log(loadedUpperGumsMeshes.length);
+        console.log("Animation Ready");
+    }
+
+    function loadZip(){
+
+        let total = 0;
+
+        JSZipUtils.getBinaryContent('assets/output.zip', function(err, data) {
+            if(err) {
+                console.log("Zip Loading Error: ", err);
+
+                throw err; // or handle err
+            }
+
+            console.log("inside getBinaryContent", data);
+
+            zipFile.loadAsync(data).then(function (res){
+
+                for (let f of Object.keys(res.files))
+                    if (!res.files[f].dir)
+                        ++total;
+
+                console.log(`Total number of files: ${total}`);
+
+                res.forEach(function (relativePath, zipEntry) {
+
+                    if(!zipEntry.dir){
+
+                        if(relativePath.indexOf("stl") !== -1){
+                            zipFile.file(relativePath).async("blob").then(function success(content) {
+
+                                let reader = new FileReader();
+
+                                // reader.addEventListener('error', function(event) {
+                                //     console.log(event);
+                                // }, false);
+
+                                reader.addEventListener('loadend', function(event) {
+
+                                    var size = '(' + Math.floor(event.total / 1000) + ' KB)';
+                                    var progress = Math.floor((event.loaded / event.total) * 100) + '%';
+                                    // console.log('Loading', relativePath, size, progress);
+
+                                    ++counter;
+
+
+                                    if (counter === total - 1){
+
+                                        document.querySelector("#loadingBar").style.display = "none";
+
+                                        for(let m of loadedMeshes){
+
+                                            m.geometry.computeVertexNormals();
+                                            if(m.geometry.name.indexOf("Jaw") === -1)
+                                                WebGL.addMesh(m);
+                                        }
+
+                                        generateAnimation();
+                                    }
+
+                                    // progressBar.set(counter / total * 100);
+                                    console.log(`${counter / total * 100}%`);
+                                }, false);
+
+                                // reader.addEventListener('progress', function(event) {
+
+                                //     var size = '(' + Math.floor(event.total / 1000) + ' KB)';
+                                //     var progress = Math.floor((event.loaded / event.total) * 100) + '%';
+                                //     //console.log('Loading', file.name, size, progress);
+
+                                // });
+
+                                reader.addEventListener('load', function(event) {
+
+                                    const contents = event.target.result;
+                                    const geometry = WebGL.stlLoader.parse(contents);
+                                    geometry.name = relativePath;
+
+                                    if (relativePath.indexOf("Jaw") !== -1){
+
+                                        if (zipEntry.name.indexOf("Upper") !== -1)
+                                            loadedUpperGeometries[UTILS.retNum(relativePath)] = geometry;
+                                        else
+                                            loadedLowerGeometries[UTILS.retNum(relativePath)] = geometry;
+                                    }
+
+                                    if(zipEntry.name.indexOf("S0_Original") !== -1){
+                                        
+                                        let mat;
+
+                                        if (zipEntry.name.indexOf("Jaw") !== -1)
+                                            mat = WebGL.gumsMaterial;
+                                        else
+                                            mat = WebGL.teethMaterial;
+
+                                        let modelMesh = new THREE.Mesh(geometry, mat);
+                                        modelMesh.name = UTILS.getFilenameFromPath(relativePath);
+
+                                        if(zipEntry.name.indexOf("Jaw") === -1){
+
+                                            loadedMeshes[UTILS.retNum(modelMesh.name) - 1] = modelMesh;
+                                        }
+                                        else{
+
+                                            loadedMeshes.push(modelMesh);
+                                        }
+
+                                        // if(zipEntry.name.indexOf("Jaw") === -1)
+                                        //     WebGL.addMesh(modelMesh);
+                                    }
+                                }, false);
+
+                                reader.readAsArrayBuffer(content);
+
+                            }, function error(e) {
+                                // handle the error
+                            });
+                        }
+                        else if (relativePath.indexOf("CentroidsAndNormals.json") !== -1){
+
+                            zipFile.file(relativePath).async("string").then(function success(content) {
+
+                               transformationSteps = JSON.parse(content);
+                               // console.log(transformationSteps);
+
+                            }, function error(e) {
+                                // handle the error
+                            });
+                        }
+                    }
+                });
+                
+            });
+        });
+    }
+    
+    function loadSTL(){
+
+        const rootDir = "output/models/Plan/";
+        const childDir = "/Models/";
+        const stepDirBase = "S"; // 1 to 30
+        const originalDir = "S0_Original";
+        const teethBase = "Tooth_";
+        const extention = ".stl";
+        const lowerGums = "Tooth_LowerJaw.stl"; // >16
+        const upperGums = "Tooth_UpperJaw.stl"; // <16
+
+        let step = {
+            upper: {teeth: [], gums: {}}, 
+            lower: {teeth: [], gums: {}}
+        };
+
+        // load original step
+        for (let i = 1; i <= 32; ++i){
+   
+            if(i <= 16){    // upper
+
+                step.upper.teeth.push({path: rootDir + originalDir + childDir + teethBase + i + extention, isLoaded : false});
+            }
+            else{   // lower
+
+                step.lower.teeth.push({path: rootDir + originalDir + childDir + teethBase + i + extention, isLoaded: false});
+            }
+        }
+
+        step.lower.gums = {path: rootDir + originalDir + childDir + lowerGums, isLoaded: false};
+        step.upper.gums = {path: rootDir + originalDir + childDir + upperGums, isLoaded: false};
+
+        plan.steps.push(step);
+
+        // load the rest of the steps
+        for (let stepIdx = 1; stepIdx <= 30; ++stepIdx){
+
+            step = {
+                upper: {teeth: [], gums: {}}, 
+                lower: {teeth: [], gums: {}}
+            };
+
+            const stepDir = stepDirBase + stepIdx;
+            
+            // for (let toothIdx = 1; toothIdx <= 32; ++toothIdx){
+
+            //     if(toothIdx <= 16){    // upper
+
+            //         step.upper.teeth.push({path: rootDir + stepDir + childDir + teethBase + toothIdx + extention, isLoaded: false});
+            //     }
+            //     else{   // lower
+
+            //         step.lower.teeth.push({path: rootDir + stepDir + childDir + teethBase + toothIdx + extention, isLoaded: false});
+            //     }
+            // }
+         
+            step.lower.gums = {path: rootDir + stepDir + childDir + lowerGums, isLoaded: false};
+            step.upper.gums = {path: rootDir + stepDir + childDir + upperGums, isLoaded: false};
+
+            plan.steps.push(step);
+        }
+
+        console.log(plan);
+
+
+         /**************************************************/
+        /**************************************************/
+        /*****************Loading Models*******************/
+        /**************************************************/
+        /**************************************************/
+        console.log("Loading Models");
+
+        let allDone = false;
+        let upperDone = false;
+        let lowerDone = false;
+
+        let timer = setInterval(function() { 
+
+            for (let [stepIdx, step] of plan.steps.entries()){
+                for (let [toothIdx, tooth] of step.upper.teeth.entries()){
+
+                    //console.log(stepIdx, toothIdx, tooth);
+                    if (!tooth.isLoaded){
+                        upperDone = false;
+                        let busy = true;
+                        for (let workerObj of workerList){
+
+                            if (!workerObj.inUse){
+                                tooth.isLoaded = true;
+                                workerObj.inUse = true;
+                                workerObj.worker.postMessage({stepIdx: stepIdx, toothIdx: toothIdx, path: tooth.path});
+                                busy = false;
+                                break;
+                            }
+                        }
+
+                        // if (busy)
+                        //     console.log("all workers are busy, waiting...");
+                    }
+                    else{
+                        upperDone = true;
+                    }
+                }
+
+                for (let [toothIdx, tooth] of step.lower.teeth.entries()){
+
+                    //console.log(tooth);
+                    if (!tooth.isLoaded){
+                        lowerDone = false;
+                        let busy = true;
+                        for (let workerObj of workerList){
+
+                            if (!workerObj.inUse){
+                                tooth.isLoaded = true;
+                                workerObj.inUse = true;
+                                workerObj.worker.postMessage({stepIdx: stepIdx, toothIdx: toothIdx, path: tooth.path});
+                                busy = false;
+                                break;
+                            }
+                        }
+
+                        // if (busy)
+                        //     console.log("all workers are busy, waiting...");
+                    }
+                    else{
+                        lowerDone = true;
+                    }
+                }
+
+                //console.log(step.upper.gums);
+                if (!step.upper.gums.isLoaded){
+                    upperDone = false;
+                    let busy = true;
+                    for (let workerObj of workerList){
+
+                        if (!workerObj.inUse){
+                            step.upper.gums.isLoaded = true;
+                            workerObj.inUse = true;
+                            workerObj.worker.postMessage({path: step.upper.gums.path, stepIdx: stepIdx});
+                            busy = false;
+                            break;
+                        }
+                    }
+
+                    // if (busy)
+                    //     console.log("all workers are busy, waiting...");
+                }
+                else{
+                    upperDone = true;
+                }
+
+                //console.log(step.lower.gums);
+                if (!step.lower.gums.isLoaded){
+                    lowerDone = false;
+                    let busy = true;
+                    for (let workerObj of workerList){
+
+                        if (!workerObj.inUse){
+                            step.lower.gums.isLoaded = true;
+                            workerObj.inUse = true;
+                            workerObj.worker.postMessage({path: step.lower.gums.path, stepIdx: stepIdx});
+                            busy = false;
+                            break;
+                        }
+                    }
+
+                    // if (busy)
+                    //     console.log("all workers are busy, waiting...");
+                }
+                else{
+                    lowerDone = true;
+                }
+            }
+
+
+            allDone = lowerDone && upperDone;
+
+
+            /**************************************************/
+            /**************************************************/
+            /***********Comparing and Zipping Models***********/
+            /**************************************************/
+            /**************************************************/
+
+            if (allDone){
+                console.log("All loaded");
+
+                if (workerList.every((val) => {return !val.inUse;})){
+
+                    for (let [index, workerObj] of workerList.entries()){
+
+                        console.log("Terminating worker ", index);
+                        workerObj.worker.terminate();                     
+                    }
+
+                    clearInterval(timer);
+
+
+                    for (let t of plan.steps[0].upper.teeth)
+                        WebGL.addMesh(t.mesh);
+
+                    for (let t of plan.steps[0].lower.teeth)
+                        WebGL.addMesh(t.mesh);
+
+                    WebGL.addMesh(plan.steps[0].lower.gums.mesh);
+                    WebGL.addMesh(plan.steps[0].upper.gums.mesh);
+
+                     for (let step of plan.steps){
+
+                        for (let tooth of step.upper.teeth){
+
+                            tooth.mesh.name = tooth.path;
+                            loadedMeshes.push(tooth.mesh);
+                        }
+
+                        for (let tooth of step.lower.teeth){
+                            tooth.mesh.name = tooth.path;
+                            loadedMeshes.push(tooth.mesh);
+                        }
+
+                        loadedUpperGeometries.push(step.upper.gums.mesh.geometry);
+                        loadedLowerGeometries.push(step.lower.gums.mesh.geometry);
+                    }
+
+                  
+                    var xobj = new XMLHttpRequest();
+                    xobj.overrideMimeType("application/json");
+                    xobj.open('GET', "assets/output/CentroidsAndNormals.json", true); // Replace 'my_data' with the path to your file
+                    xobj.onreadystatechange = function () {
+                          if (xobj.readyState == 4 && xobj.status == "200") {
+                            // Required use of an anonymous callback as .open will NOT return a value but simply returns undefined in asynchronous mode
+                            transformationSteps = JSON.parse(xobj.responseText);
+                            generateAnimation();
+                          }
+                    };
+                    xobj.send(null);
+                }      
+            }
+
+        }, 10);
+    }
+
+    /**
+     * [init Initialize application and attach event handlers]
+     *
+     */
+    function initApp() {
+        
+        mouseVector = new THREE.Vector3();
+        HTML.init();
+        WebGL.init();
+        // loadZip();
+        loadSTL();
+    }
+   
+    return {
+        // public methods and properties
+        initApp,
+        loadZip,
+        camera: WebGL.camera,
+        setClipTime(t){
+            for(let clip of clipActions){
+                clip.time = t;
+            }
+
+            for(let i = 0; i < upperGumsClipActions.length; ++i){
+
+                 if (t >= i && t <= i + 1){
+
+                    loadedUpperGumsMeshes[i].visible = true;
+                    upperGumsClipActions[i].time = t - i;
+
+                }
+                else{
+
+                    loadedUpperGumsMeshes[i].visible = false;
+                }
+            }
+
+            for(let i = 0; i < lowerGumsClipActions.length; ++i){
+
+                 if (t >= i && t <= i + 1){
+
+                    loadedLowerGumsMeshes[i].visible = true;
+                    lowerGumsClipActions[i].time = t - i;
+
+                }
+                else{
+
+                    loadedLowerGumsMeshes[i].visible = false;
+                }
+            }
+        },
+        setSpeed(speed){
+            for(let clip of clipActions){
+                clip.setEffectiveTimeScale(speed);
+            }
+
+            for(let i = 0; i < upperGumsClipActions.length; ++i){
+
+                upperGumsClipActions[i].setEffectiveTimeScale(speed); 
+            }
+
+            for(let i = 0; i < lowerGumsClipActions.length; ++i){
+
+                lowerGumsClipActions[i].setEffectiveTimeScale(speed); 
+            }
+        },
+        togglePlay(){
+
+            // console.log(isPlaying);
+
+            for(let clip of clipActions){
+                clip.paused = isPlaying;
+            }
+
+            for(let i = 0; i < upperGumsClipActions.length; ++i){
+
+                upperGumsClipActions[i].paused = isPlaying; 
+            }
+
+            for(let i = 0; i < lowerGumsClipActions.length; ++i){
+
+                lowerGumsClipActions[i].paused = isPlaying;
+            }
+
+            isPlaying = !isPlaying;
+        },
+        resetClips(){
+            for(let clip of clipActions){
+                clip.reset();
+            }
+
+             for(let i = 0; i < upperGumsClipActions.length; ++i){
+
+                upperGumsClipActions[i].reset();
+            }
+
+            for(let i = 0; i < lowerGumsClipActions.length; ++i){
+
+                lowerGumsClipActions[i].reset();                                                                                                        
+            }
+        },
+        resetClipsTime(){
+
+            for(let clip of clipActions){
+                clip.time = 0.0;
+            }
+
+            for(let clip of upperGumsClipActions){
+                clip.time = 0.0;
+            }
+
+            for(let clip of lowerGumsClipActions){
+                clip.time = 0.0;
+            }
+        },
+        maxil(){
+
+            if(!showMaxil){
+
+                for(let g of loadedLowerGumsMeshes)
+                    g.visible = showMaxil;
+
+
+            }
+            else{
+
+                let t = clipActions[0].time;
+
+                if (t <= 29){
+
+                    
+                    for(let i = 0; i < lowerGumsClipActions.length; ++i){
+
+                        if (t >= i && t <= i + 1){
+
+                            loadedLowerGumsMeshes[i].visible = true;
+
+                        }
+                        else{
+
+                            loadedLowerGumsMeshes[i].visible = false;
+                        }
+                    }
+                    
+                }
+            }
+
+            // console.log(loadedLowerGumsMeshes);
+
+            for(let i = 16; i < 32; ++i)
+                if(loadedMeshes[i].name.indexOf("Jaw") === -1)
+                    loadedMeshes[i].visible = showMaxil;
+
+            for(let i = 0; i < 16; ++i)
+                if(loadedMeshes[i].name.indexOf("Jaw") === -1)
+                    loadedMeshes[i].visible = true;
+
+            showMaxil = !showMaxil;
+            showMand = false;
+        },
+        mand(){
+
+            if(!showMand){
+
+                for(let g of loadedUpperGumsMeshes)
+                    g.visible = showMand;
+
+
+            }
+            else{
+
+                let t = clipActions[0].time;
+
+                if (t <= 29){
+
+                    
+                    for(let i = 0; i < upperGumsClipActions.length; ++i){
+
+                        if (t >= i && t <= i + 1){
+
+                            loadedUpperGumsMeshes[i].visible = true;
+
+                        }
+                        else{
+
+                            loadedUpperGumsMeshes[i].visible = false;
+                        }
+                    }
+                    
+                }
+            }
+
+            // console.log(loadedLowerGumsMeshes);
+
+            for(let i = 0; i < 16; ++i)
+                if(loadedMeshes[i].name.indexOf("Jaw") === -1)
+                    loadedMeshes[i].visible = showMand;
+
+
+            for(let i = 16; i < 32; ++i)
+                if(loadedMeshes[i].name.indexOf("Jaw") === -1)
+                    loadedMeshes[i].visible = true;
+
+            showMand = !showMand;
+            showMaxil = false;
+        },
+        left(){
+
+            WebGL.camera.lookAt(WebGL.scene.position);
+            WebGL.camera.up = new THREE.Vector3( 0, 0, 1 );
+            WebGL.camera.position.set(0,350, 0);
+        },
+        right(){
+
+            WebGL.camera.lookAt(WebGL.scene.position);
+            WebGL.camera.up = new THREE.Vector3( 0, 0, 1 );
+
+            WebGL.camera.position.set(0,-350, 0);
+        },
+        center(){
+            // const tq = new THREE.Quaternion();
+            // WebGL.camera.quaternion.copy(tq);
+            console.log(WebGL.scene.position);
+            WebGL.camera.lookAt(WebGL.scene.position);
+            WebGL.camera.up = new THREE.Vector3( 0, 0, 1 );
+
+            WebGL.camera.position.set(350,0, 0);
+        }
+    };
+}());
+
+document.addEventListener("DOMContentLoaded", (event) => {
+    APP.initApp();
+});

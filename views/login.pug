@@ -1,13 +1,81 @@
-extends layout
-
-block content
-  h1 Login
-  form(method='POST', action='/users/login')
-    #form-group
-      label Username:
-      input.form-control(name='username',type='text')
-    #form-group
-      label Password:
-      input.form-control(name='password',type='password')
-    br
-    input.btn.btn-primary(type='submit',value='Submit')
+html
+	head
+		meta(charset='utf-8')
+		title KLINE - Login
+		meta(name='viewport', content='width=device-width, initial-scale=1')
+		meta(content='', name='description')
+		meta(content='IRIS', name='author')
+		link(rel='shortcut icon', href='/assets/images/favicon.png')
+		link(href='/assets/css/style.css', rel='stylesheet')
+		link(href='/assets/css/ui.css', rel='stylesheet')
+		link(href='/assets/plugins/bootstrap-loading/lada.min.css', rel='stylesheet')
+		link(href='https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css', rel='stylesheet')
+	body.sidebar-condensed.account2(data-page='login')
+		// BEGIN LOGIN BOX
+		#login-block.container
+			img.user-img.icons-faces-users-03(src='/assets/images/logo/logo.png')
+			//
+				<div class="account-info">
+				<a href="/" class="logo"></a>
+				<h3>KLine Patients List</h3>
+				<ul>
+				</ul>
+				</div>		
+			
+			.account-form
+				.error
+					!= messages('message', locals)
+					if errors
+						each error, i in errors
+							div(class="alert alert-danger") #{error.msg}
+				form.form-signin(role='form', method='POST', action='/users/login')
+					h3
+						strong Sign in
+						|  to your account
+					.append-icon
+						input#name.form-control.form-white.username(name='username',type='text', placeholder='Username', required='')
+						i.icon-user
+					.append-icon.m-b-20
+						input.form-control.form-white.password(name='password',type='password', placeholder='Password', required='')
+						i.icon-lock
+					button.btn.btn-lg.btn-primary.btn-square.ladda-button(type='submit', data-style='expand-left') Sign In
+					span.forgot-password
+						a#password(href='account-forgot-password.html') Forgot password?
+					.form-footer
+						.social-btn
+							button.btn-fb.btn.btn-lg.btn-block.btn-square(type='button')
+								i.fa.fa-facebook.pull-left
+								| Connect with Facebook
+							button.btn.btn-tw.btn-lg.btn-block.btn-blue.btn-square(type='button')
+								i.fa.fa-twitter.pull-left
+								| Login with Twitter
+						.clearfix
+							p.new-here
+								a(href='signup.html') New here? Sign up
+				form.form-password(role='form')
+					h3
+						strong Reset
+						|  your password
+					.append-icon.m-b-20
+						input.form-control.form-white.password(type='password', name='password', placeholder='Password', required='')
+						i.icon-lock
+					button#submit-password.btn.btn-lg.btn-danger.btn-block.ladda-button(type='submit', data-style='expand-left') Send Password Reset Link
+					.clearfix.m-t-60
+						p.pull-left.m-t-20.m-b-0
+							a#login(href='#') Have an account? Sign In
+						p.pull-right.m-t-20.m-b-0
+							a(href='signup.html') New here? Sign up
+		// END LOCKSCREEN BOX
+		p.account-copyright
+			span Copyright © 2018 
+			span KLine
+			| .
+			span All rights reserved.
+		script(src='/assets/plugins/jquery/jquery-1.11.1.min.js')
+		script(src='/assets/plugins/jquery/jquery-migrate-1.2.1.min.js')
+		script(src='/assets/plugins/gsap/main-gsap.min.js')
+		script(src='/assets/plugins/bootstrap/js/bootstrap.min.js')
+		script(src='/assets/plugins/backstretch/backstretch.min.js')
+		script(src='/assets/plugins/bootstrap-loading/lada.min.js')
+		script(src='/assets/js/pages/login-v2.js')
+		script(src='/assets/plugins/layout/js/layout.js')
