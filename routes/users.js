@@ -67,10 +67,21 @@ router.get('/login', function(req, res){
 
 // Login Process
 router.post('/login', function(req, res, next){
-  passport.authenticate('local', {
-    successRedirect:'/',
-    failureRedirect:'/users/login',
-    failureFlash: true
+  passport.authenticate('local', function(err, user, info){
+    if (err) { 
+	return next(err); 
+	}
+    if (!user) {
+	req.flash('success', 'invalid user name or password'); 
+	return res.redirect('/users/login'); 
+	}
+    req.logIn(user, function(err) {
+      if (err) { 
+	  return next(err); 
+	  }
+	  req.flash('success', 'Welcom ' + user.name);
+      return res.redirect('/');
+    });
   })(req, res, next);
 });
 

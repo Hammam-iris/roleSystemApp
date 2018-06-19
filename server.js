@@ -7,7 +7,7 @@ const flash = require('connect-flash');
 const session = require('express-session');
 const passport = require('passport');
 const config = require('./config/database');
-
+var acl = require('acl');
 mongoose.connect(config.database);
 let db = mongoose.connection;
 
@@ -20,6 +20,9 @@ db.once('open', function(){
 db.on('error', function(err){
   console.log(err);
 });
+
+// Using the mongodb backend for access control list
+acl = new acl(new acl.mongodbBackend(db, 'prefix'));
 
 // Init App
 const app = express();
@@ -98,6 +101,7 @@ app.get('/', function(req, res){
 });
 
 // Route Files
+app.set('acl', acl);
 let articles = require('./routes/articles');
 let users = require('./routes/users');
 app.use('/articles', articles);
